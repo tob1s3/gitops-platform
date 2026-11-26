@@ -1,0 +1,13 @@
+# Staging: синхронизируется Argo CD автоматически после каждого коммита в main.
+environment: staging
+replicaCount: 2
+shutdownDelay: 3s
+
+image:
+  tag: "0.1.0"
+
+autoscaling:
+  enabled: false
+
+tests:
+  enabled: false  # Argo CD не запускает helm test

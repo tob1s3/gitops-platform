@@ -1,0 +1,22 @@
+# Источник правды для Argo CD. Добавить окружение = добавить элемент в environments
+# и папку environments/<name> с values.yaml.
+
+repoURL: https://github.com/tob1s3/gitops-platform.git
+targetRevision: main
+project: platform
+
+environments:
+  - name: staging
+    namespace: pulse-staging
+    # Каждый коммит в main автоматически выкатывается; ручные правки в кластере откатываются.
+    autoSync: true
+  - name: production
+    namespace: pulse-production
+    # Выкатка только вручную (кнопка Sync или `argocd app sync`) — это и есть promotion gate.
+    autoSync: false
+
+# Только для e2e-теста в CI: подменить образ во всех окружениях (например, на собранный локально).
+imageOverride: {}
+#  repository: pulse
+#  tag: e2e
+#  pullPolicy: Never

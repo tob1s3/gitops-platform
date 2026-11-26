@@ -1,0 +1,33 @@
+{{- if .Values.autoscaling.enabled }}
+{{- if lt (int .Values.autoscaling.maxReplicas) (int .Values.autoscaling.minReplicas) }}
+{{- fail "autoscaling.maxReplicas must be >= autoscaling.minReplicas" }}
+{{- end }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "pulse.fullname" . }}
+  labels:
+    {{- include "pulse.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "pulse.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    # Масштабируемся вверх быстро, вниз — осторожно, чтобы не «пилить» число реплик.
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+{{- end }}

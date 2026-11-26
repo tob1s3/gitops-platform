@@ -1,0 +1,5 @@
+pulse {{ .Values.image.tag | default .Chart.AppVersion }} развёрнут в namespace {{ .Release.Namespace }}.
+
+Проверить:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "pulse.fullname" . }} 8080:{{ .Values.service.port }}
+  curl localhost:8080/

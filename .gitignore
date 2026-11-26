@@ -1,0 +1,9 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+crash.log
+# Результаты scripts/validate-chart.sh
+rendered/

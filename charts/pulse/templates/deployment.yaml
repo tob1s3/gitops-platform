@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pulse.fullname" . }}
+  labels:
+    {{- include "pulse.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Новая реплика поднимается раньше, чем гасится старая: обновление без потери ёмкости.
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "pulse.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pulse.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.containerPort | quote }}
+        prometheus.io/path: /metrics
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "pulse.serviceAccountName" . }}
+      # Сервису не нужен доступ к API Kubernetes — токен в под не монтируем.
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if .Values.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "pulse.selectorLabels" . | nindent 14 }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "pulse.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      containers:
+        - name: pulse
+          image: {{ include "pulse.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.containerPort | quote }}
+            - name: APP_ENV
+              value: {{ .Values.environment | quote }}
+            - name: SHUTDOWN_DELAY
+              value: {{ .Values.shutdownDelay | quote }}
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            privileged: false
+            capabilities:
+              drop: ["ALL"]
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

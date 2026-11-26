@@ -1,0 +1,35 @@
+# Проект ограничивает, что и куда может развернуть Argo CD:
+# только этот репозиторий, только namespace pulse-*, только перечисленные типы ресурсов.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .Values.project }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # Проект создаётся раньше приложений, которые на него ссылаются.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: Сервис pulse во всех окружениях
+  sourceRepos:
+    - {{ .Values.repoURL | quote }}
+  destinations:
+    {{- range .Values.environments }}
+    - server: https://kubernetes.default.svc
+      namespace: {{ .namespace }}
+    {{- end }}
+  # Из ресурсов уровня кластера — только namespace (его создаёт CreateNamespace).
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - {group: "", kind: Service}
+    - {group: "", kind: ServiceAccount}
+    - {group: "", kind: ConfigMap}
+    - {group: apps, kind: Deployment}
+    - {group: autoscaling, kind: HorizontalPodAutoscaler}
+    - {group: policy, kind: PodDisruptionBudget}
+    - {group: networking.k8s.io, kind: NetworkPolicy}
+    - {group: networking.k8s.io, kind: Ingress}
+    - {group: monitoring.coreos.com, kind: ServiceMonitor}
+  orphanedResources:
+    warn: true

@@ -1,0 +1,37 @@
+# Production: Argo CD показывает расхождение, но синхронизация — только вручную (promotion gate).
+environment: production
+
+image:
+  tag: "0.1.0"
+  # В production образ фиксируется по digest — тег можно перезаписать, digest нельзя.
+  # digest: sha256:...
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 65
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+ingress:
+  enabled: true
+  className: nginx
+  host: pulse.example.com
+  tls:
+    enabled: true
+    secretName: pulse-tls
+  annotations:
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+
+tests:
+  enabled: false  # Argo CD не запускает helm test

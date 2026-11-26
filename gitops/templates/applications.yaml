@@ -1,0 +1,56 @@
+{{- range .Values.environments }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pulse-{{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: gitops-platform
+    environment: {{ .name }}
+  # При удалении Application Argo CD удалит и развёрнутые ресурсы.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $.Values.project }}
+  source:
+    repoURL: {{ $.Values.repoURL | quote }}
+    targetRevision: {{ $.Values.targetRevision | quote }}
+    path: charts/pulse
+    helm:
+      releaseName: pulse
+      valueFiles:
+        - ../../environments/{{ .name }}/values.yaml
+      {{- with $.Values.imageOverride }}
+      parameters:
+        {{- range $key, $value := . }}
+        - name: image.{{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+      {{- end }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .namespace }}
+  syncPolicy:
+    {{- if .autoSync }}
+    automated:
+      prune: true
+      selfHeal: true
+    {{- end }}
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    # Namespace сразу создаётся с политикой Pod Security «restricted»:
+    # под, который не соответствует требованиям (root, привилегии, hostPath), не будет допущен.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/warn: restricted
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10
+{{- end }}

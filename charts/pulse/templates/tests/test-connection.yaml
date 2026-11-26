@@ -1,0 +1,33 @@
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "pulse.fullname" . }}-test
+  labels:
+    {{- include "pulse.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    checkov.io/skip1: CKV_K8S_8=одноразовый тестовый под, пробы не нужны
+    checkov.io/skip2: CKV_K8S_9=одноразовый тестовый под, пробы не нужны
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: wget
+      image: busybox:1.37
+      command: ["wget", "-q", "-O-", "-T", "5", "http://{{ include "pulse.fullname" . }}:{{ .Values.service.port }}/readyz"]
+      resources:
+        requests: {cpu: 10m, memory: 8Mi}
+        limits: {memory: 16Mi}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+{{- end }}

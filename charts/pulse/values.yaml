@@ -1,0 +1,102 @@
+# Значения по умолчанию безопасны и подходят для разработки.
+# Окружения переопределяют только то, что отличается: environments/<env>/values.yaml.
+
+image:
+  repository: ghcr.io/tob1s3/pulse
+  # Пусто — берётся appVersion из Chart.yaml. В окружениях лучше указывать digest.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+# Переменная APP_ENV внутри контейнера.
+environment: dev
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+containerPort: 8080
+
+# Сколько сервис ждёт после SIGTERM, прежде чем закрыть порт (см. app/server.go).
+shutdownDelay: 5s
+# Должно быть больше shutdownDelay + времени на завершение запросов.
+terminationGracePeriodSeconds: 30
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    memory: 64Mi
+
+probes:
+  startup:
+    periodSeconds: 2
+    failureThreshold: 15
+  liveness:
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 5
+    failureThreshold: 2
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# Разносим реплики по узлам и зонам, чтобы потеря одного узла не уронила сервис.
+topologySpread:
+  enabled: true
+  maxSkew: 1
+
+networkPolicy:
+  enabled: true
+  # Откуда разрешён входящий трафик (помимо подов этого же релиза).
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+  # Откуда разрешён сбор метрик.
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+
+serviceMonitor:
+  # Требует установленного prometheus-operator (CRD monitoring.coreos.com/v1).
+  enabled: false
+  interval: 30s
+  labels: {}
+
+ingress:
+  enabled: false
+  className: nginx
+  host: pulse.example.com
+  tls:
+    enabled: false
+    secretName: ""
+  annotations: {}
+
+# Под для `helm test`. Argo CD не запускает helm-тесты, поэтому в окружениях под GitOps он отключён.
+tests:
+  enabled: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

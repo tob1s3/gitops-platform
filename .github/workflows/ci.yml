@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HELM_VERSION: v4.3.2
+  TERRAFORM_VERSION: 1.17.2
+  KUBECONFORM_VERSION: v0.8.0
+  IMAGE: ghcr.io/${{ github.repository_owner }}/pulse
+
+jobs:
+  app:
+    name: app (go test, vet, govulncheck)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: app/go.mod
+          cache: false
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -d .; exit 1; }
+      - run: go vet ./...
+      - run: go test -race -count=1 -cover ./...
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  chart:
+    name: helm chart (lint, kubeconform, checkov)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Install kubeconform
+        run: |
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+      - run: scripts/validate-chart.sh
+      - name: checkov (rendered manifests)
+        run: |
+          pipx run checkov --config-file .checkov.yaml -d rendered --framework kubernetes
+
+  terraform:
+    name: terraform (fmt, validate, checkov)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive -diff
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      - name: checkov (terraform)
+        run: pipx run checkov --config-file ../.checkov.yaml -d . --framework terraform
+
+  image:
+    name: image (build, trivy, push on main)
+    runs-on: ubuntu-24.04
+    needs: app
+    permissions:
+      contents: read
+      packages: write # публикация в GHCR только на push в main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: app
+          load: true
+          tags: pulse:ci
+          build-args: VERSION=${{ github.sha }}
+      - name: Trivy (уязвимости образа)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: pulse:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Push to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker tag pulse:ci "$IMAGE:sha-${GITHUB_SHA::12}"
+          docker push "$IMAGE:sha-${GITHUB_SHA::12}"
+          docker logout ghcr.io
+
+  # Полный цикл в настоящем кластере: Terraform поднимает kind и Argo CD,
+  # Argo CD берёт манифесты из этого коммита и выкатывает staging.
+  e2e:
+    name: e2e (kind + Argo CD)
+    runs-on: ubuntu-24.04
+    needs: [chart, terraform, image]
+    timeout-minutes: 30
+    env:
+      # Для PR — коммит ветки (его Argo CD может скачать с GitHub), для push — сам коммит.
+      GIT_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      REPO_URL: ${{ github.server_url }}/${{ github.event.pull_request.head.repo.full_name || github.repository }}.git
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: app
+          load: true
+          tags: pulse:e2e
+          build-args: VERSION=e2e
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: terraform apply
+        working-directory: terraform
+        env:
+          TF_VAR_cluster_name: e2e
+          TF_VAR_repo_url: ${{ env.REPO_URL }}
+          TF_VAR_git_revision: ${{ env.GIT_REVISION }}
+          TF_VAR_local_images: '["pulse:e2e"]'
+          TF_VAR_image_override: '{repository = "pulse", tag = "e2e", pullPolicy = "Never"}'
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve
+          echo "KUBECONFIG=$(terraform output -raw kubeconfig_path)" >> "$GITHUB_ENV"
+      - name: Wait for Argo CD to sync staging
+        run: scripts/e2e-check.sh
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl -n argocd get applications -o wide || true
+          kubectl -n argocd get applications -o yaml | grep -A30 'status:' || true
+          kubectl get all -n pulse-staging || true
+          kubectl describe pods -n pulse-staging || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -50 || true
+      - name: terraform destroy
+        if: always()
+        timeout-minutes: 10
+        working-directory: terraform
+        env:
+          TF_VAR_cluster_name: e2e
+          TF_VAR_local_images: '["pulse:e2e"]'
+        run: terraform destroy -input=false -auto-approve || true

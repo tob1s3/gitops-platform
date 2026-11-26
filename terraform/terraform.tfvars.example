@@ -1,0 +1,5 @@
+# cp terraform.tfvars.example terraform.tfvars
+cluster_name = "gitops-platform"
+worker_count = 2
+repo_url     = "https://github.com/tob1s3/gitops-platform.git"
+git_revision = "main"
